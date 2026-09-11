@@ -2,15 +2,10 @@ import json
 import logging
 from typing import NamedTuple
 
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types
-
 from config import settings
+from services.openrouter import complete
 
 logger = logging.getLogger(__name__)
-
-_client: genai.Client | None = None
 
 _INTENT_PROMPT = (
     'Classify the question and return a JSON object with three fields.\n\n'
@@ -85,20 +80,21 @@ _INTENT_PROMPT = (
 )
 
 _RESPONSE_SCHEMA = {
-    'type': 'OBJECT',
+    'type': 'object',
     'properties': {
         'intent': {
-            'type': 'STRING',
+            'type': 'string',
             'enum': [
                 'summary', 'extraction', 'comparison', 'boolean',
                 'definition', 'procedural', 'analytical', 'troubleshooting',
                 'recommendation', 'factual', 'chitchat', 'out_of_scope',
             ],
         },
-        'hypothetical': {'type': 'STRING'},
-        'standalone_query': {'type': 'STRING'},
+        'hypothetical': {'type': 'string'},
+        'standalone_query': {'type': 'string'},
     },
     'required': ['intent', 'hypothetical', 'standalone_query'],
+    'additionalProperties': False,
 }
 
 _VALID_INTENTS = {
@@ -114,15 +110,8 @@ class IntentResult(NamedTuple):
     standalone_query: str
 
 
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client(api_key=settings.google_api_key)
-    return _client
-
-
 def _get_models() -> list[str]:
-    return [m.strip() for m in settings.gemini_chat_models.split(',') if m.strip()]
+    return [m.strip() for m in settings.openrouter_chat_models.split(',') if m.strip()]
 
 
 def _build_history_snippet(history: list[dict]) -> str:
@@ -142,25 +131,24 @@ async def classify_intent(question: str, history: list[dict] | None = None) -> I
     Saves one round-trip vs calling classify + generate_hypothetical separately.
     Falls back to (factual, '', '') if all models fail.
     """
-    client = _get_client()
     history_snippet = _build_history_snippet(history or [])
-    contents = f'{_INTENT_PROMPT}{history_snippet}\n\nQuestion: {question}'
-
-    config = types.GenerateContentConfig(
-        response_mime_type='application/json',
-        response_schema=_RESPONSE_SCHEMA,
-        max_output_tokens=300,
-        temperature=0.0,
-    )
+    messages = [{'role': 'user', 'content': f'{_INTENT_PROMPT}{history_snippet}\n\nQuestion: {question}'}]
+    response_format = {
+        'type': 'json_schema',
+        'json_schema': {'name': 'intent_result', 'strict': True, 'schema': _RESPONSE_SCHEMA},
+    }
 
     for model in _get_models():
         try:
-            response = await client.aio.models.generate_content(
-                model=model,
-                contents=contents,
-                config=config,
+            response = await complete(
+                model,
+                messages,
+                response_format=response_format,
+                provider={'require_parameters': True},
+                max_tokens=300,
+                temperature=0.0,
             )
-            data = json.loads(response.text or '{}')
+            data = json.loads(response)
             intent = data.get('intent', '')
             if intent in _VALID_INTENTS:
                 return IntentResult(
@@ -169,12 +157,6 @@ async def classify_intent(question: str, history: list[dict] | None = None) -> I
                     standalone_query=data.get('standalone_query', '') or '',
                 )
             logger.warning('Intent classifier: unexpected value "%s" from %s', intent, model)
-        except genai_errors.ClientError as exc:
-            if exc.code == 429:
-                logger.warning('Intent classifier: %s quota exhausted, trying next', model)
-                continue
-            logger.warning('Intent classifier: %s client error, trying next: %s', model, exc)
-            continue
         except Exception as exc:
             logger.warning('Intent classifier: %s failed, trying next: %s', model, exc)
             continue

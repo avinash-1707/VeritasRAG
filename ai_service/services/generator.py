@@ -2,15 +2,11 @@ import json
 import logging
 from typing import Any, AsyncIterator
 
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types
-
 from config import settings
+from services.openrouter import stream
 
 logger = logging.getLogger(__name__)
 
-_client: genai.Client | None = None
 _LOW_GROUNDING_THRESHOLD = 0.15
 _MAX_HISTORY_TURNS = 10
 
@@ -111,15 +107,8 @@ _NO_CONTEXT_SYSTEM_PROMPT = (
 )
 
 
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client(api_key=settings.google_api_key)
-    return _client
-
-
 def _get_models() -> list[str]:
-    return [m.strip() for m in settings.gemini_chat_models.split(',') if m.strip()]
+    return [m.strip() for m in settings.openrouter_chat_models.split(',') if m.strip()]
 
 
 def _build_context(chunks: list[dict[str, Any]]) -> str:
@@ -138,10 +127,10 @@ def _build_contents(
     question: str,
     context: str,
     history: list[dict[str, Any]],
-) -> list[types.Content]:
-    contents: list[types.Content] = []
+) -> list[dict[str, str]]:
+    contents: list[dict[str, str]] = []
 
-    # Strip assistant refusals — they bias Gemini to refuse again even when the
+    # Strip assistant refusals: they bias the next model response even when the
     # current turn has valid excerpts. Keep the user message so conversation
     # thread stays intact for follow-up resolution.
     filtered: list[dict[str, Any]] = []
@@ -152,20 +141,16 @@ def _build_contents(
             filtered.append(msg)
 
     for msg in filtered:
-        role = 'user' if msg['role'] == 'user' else 'model'
-        contents.append(types.Content(role=role, parts=[types.Part(text=msg['content'])]))
+        role = 'user' if msg['role'] == 'user' else 'assistant'
+        contents.append({'role': role, 'content': msg['content']})
 
-    contents.append(types.Content(
-        role='user',
-        parts=[types.Part(text=f'Source excerpts:\n\n{context}\n\nQuestion: {question}')],
-    ))
+    contents.append({'role': 'user', 'content': f'Source excerpts:\n\n{context}\n\nQuestion: {question}'})
     return contents
 
 
 
 async def _stream_with_fallback(
-    client: genai.Client,
-    contents: list[types.Content],
+    contents: list[dict[str, str]],
     answer_parts: list[str],
     system_prompt: str = _SYSTEM_PROMPT,
 ) -> AsyncIterator[str]:
@@ -174,29 +159,18 @@ async def _stream_with_fallback(
 
     for model in models:
         try:
-            async for chunk in await client.aio.models.generate_content_stream(
-                model=model,
-                contents=contents,
-                config=types.GenerateContentConfig(system_instruction=system_prompt),
-            ):
-                token = chunk.text or ''
-                if token:
-                    answer_parts.append(token)
-                    yield f'data: {json.dumps({"token": token})}\n\n'
+            messages = [{'role': 'system', 'content': system_prompt}, *contents]
+            async for token in stream(model, messages):
+                answer_parts.append(token)
+                yield f'data: {json.dumps({"token": token})}\n\n'
             yield f'__model__:{model}'
             return
-        except genai_errors.ClientError as exc:
-            if exc.code == 429:
-                logger.warning('Model %s quota exhausted, trying next', model)
-                last_exc = exc
-                continue
-            raise
         except Exception as exc:
             logger.warning('Model %s failed (%s), trying next', model, exc)
             last_exc = exc
             continue
 
-    raise RuntimeError('All Gemini models exhausted') from last_exc
+    raise RuntimeError('All OpenRouter models exhausted') from last_exc
 
 
 async def generate(
@@ -205,7 +179,6 @@ async def generate(
     history: list[dict[str, Any]] | None = None,
     intent: str = 'factual',
 ) -> AsyncIterator[str]:
-    client = _get_client()
     raw_scores = [float(c.get('rerank_score', c.get('similarity_score', 0.0))) for c in chunks]
     top_sim = max(raw_scores, default=0.0)
 
@@ -248,12 +221,9 @@ async def generate(
     model_used = _get_models()[0]
 
     if low_confidence:
-        no_context_contents = [types.Content(
-            role='user',
-            parts=[types.Part(text=f'Question: {question}')],
-        )]
+        no_context_contents = [{'role': 'user', 'content': f'Question: {question}'}]
         try:
-            async for event in _stream_with_fallback(client, no_context_contents, answer_parts, _NO_CONTEXT_SYSTEM_PROMPT):
+            async for event in _stream_with_fallback(no_context_contents, answer_parts, _NO_CONTEXT_SYSTEM_PROMPT):
                 if event.startswith('__model__:'):
                     model_used = event[len('__model__:'):]
                 else:
@@ -265,7 +235,7 @@ async def generate(
             answer_parts.append(answer)
     else:
         try:
-            async for event in _stream_with_fallback(client, contents, answer_parts, system_prompt):
+            async for event in _stream_with_fallback(contents, answer_parts, system_prompt):
                 if event.startswith('__model__:'):
                     model_used = event[len('__model__:'):]
                 else:

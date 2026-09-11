@@ -14,6 +14,6 @@ class HealthResponse(BaseModel):
 async def health() -> HealthResponse:
     return HealthResponse(
         status='ok',
-        model='text-embedding-004',
+        model='gemini-embedding-001',
         reranker='cross-encoder/ms-marco-MiniLM-L-6-v2',
     )

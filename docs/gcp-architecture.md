@@ -118,9 +118,9 @@ For a serverless-native approach, replace Celery entirely:
 
 This eliminates the always-on worker cost and gives per-job scaling.
 
-### LLM / embeddings already on Vertex AI
+### Embeddings on Vertex AI
 
-The current stack uses `google-genai` with `text-embedding-005` and `gemini-2.5-flash-lite`. On GCP, the same models are available via the Vertex AI endpoint — change `GOOGLE_GENAI_USE_VERTEXAI=1` and set `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION`. No SDK changes.
+The current stack uses Google `gemini-embedding-001` at 768 dimensions for embeddings and OpenRouter for chat generation. On GCP, embeddings can move to the Vertex AI endpoint by setting `GOOGLE_GENAI_USE_VERTEXAI=1` and configuring `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION`. Chat generation continues to use `OPENROUTER_API_KEY`.
 
 ### Vertex AI Vector Search (scale-out path)
 

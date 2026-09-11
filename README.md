@@ -136,8 +136,8 @@ VeritasRAG is a production-grade RAG (Retrieval-Augmented Generation) system bui
 | Database | PostgreSQL 16 + pgvector (Neon) |
 | Cache + broker | Redis 7 (Upstash) |
 | File storage | Cloudinary |
-| Embeddings | Google `text-embedding-004` — 768 dimensions |
-| LLM | Google `gemini-2.5-flash-lite` (with `gemini-2.0-flash-lite` fallback) |
+| Embeddings | Google `gemini-embedding-001` — 768 dimensions |
+| LLM | OpenRouter: Google `gemini-3.1-flash-lite` (with OpenAI `gpt-5.4-mini` fallback) |
 | Reranker | Cohere reranker via API |
 | Containerization | Docker + Docker Compose |
 | Frontend deploy | Vercel |
@@ -354,7 +354,7 @@ Django POST /api/chat/query/
              — if top_sim < 0.15 → low-confidence path: _NO_CONTEXT_SYSTEM_PROMPT,
                no source excerpts injected, model acknowledges gap
              — else → builds [source excerpts + question] content,
-               streams tokens via SSE (gemini-2.5-flash-lite with fallback chain)
+               streams tokens via SSE (OpenRouter primary/fallback chain)
              │
              ▼
        Django proxies SSE stream → Next.js → browser (token by token)
@@ -586,7 +586,7 @@ cp backend/.env.example backend/.env
 
 # AI service
 cp ai_service/.env.example ai_service/.env
-# Edit ai_service/.env — set GOOGLE_API_KEY, CLOUDINARY_URL, INTERNAL_API_KEY (same as backend)
+# Edit ai_service/.env — set GOOGLE_API_KEY, OPENROUTER_API_KEY, CLOUDINARY_URL, INTERNAL_API_KEY (same as backend)
 
 # Frontend
 cp frontend/.env.local.example frontend/.env.local
@@ -891,7 +891,7 @@ data: {
   ],
   "grounding_score": 0.87,
   "top_similarity_score": 0.91,
-  "model_used": "gemini-2.5-flash-lite"
+  "model_used": "google/gemini-3.1-flash-lite"
 }
 ```
 
@@ -940,7 +940,7 @@ Last 100 query logs for the authenticated user.
     "top_similarity_score": 0.91,
     "cache_hit": false,
     "low_confidence": false,
-    "model_used": "gemini-2.5-flash-lite",
+    "model_used": "google/gemini-3.1-flash-lite",
     "created_at": "2026-05-13T10:05:00Z"
   }
 ]
@@ -1025,7 +1025,8 @@ All Render services are declared in `render.yaml` (infrastructure as code). On f
    - `CLOUDINARY_URL` — `cloudinary://api_key:api_secret@cloud_name`
    - `AI_SERVICE_URL` — internal URL of the FastAPI service
    - `INTERNAL_API_KEY` — random secret (same value in both Django and FastAPI services)
-   - `GOOGLE_API_KEY` — Google AI Studio key (FastAPI service only)
+   - `GOOGLE_API_KEY` — Google AI Studio key for embeddings (FastAPI service only)
+   - `OPENROUTER_API_KEY` — OpenRouter key for chat generation (FastAPI service only)
 
 3. The `veritasrag-api` service runs `python manage.py migrate` as its pre-deploy command.
 

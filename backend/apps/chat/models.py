@@ -70,7 +70,7 @@ class QueryLog(models.Model):
     top_similarity_score = models.FloatField(null=True, blank=True)
     grounding_score = models.FloatField(null=True, blank=True)
     cache_hit = models.BooleanField(default=False)
-    model_used = models.CharField(max_length=100, default='gemini-2.5-flash-lite')
+    model_used = models.CharField(max_length=100, default='google/gemini-3.1-flash-lite')
     low_confidence = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

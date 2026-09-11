@@ -36,7 +36,7 @@ def test_complete_sends_openrouter_request(monkeypatch):
 
     assert answer == 'Answer'
     assert request_data == {
-        'authorization': 'Bearer openrouter-test-key',
+        'authorization': f'Bearer {openrouter.settings.openrouter_api_key}',
         'payload': {
             'model': 'google/gemini-3.1-flash-lite',
             'messages': [{'role': 'user', 'content': 'Hi'}],
